@@ -1,0 +1,78 @@
+//@version=5
+indicator("VWAP MAX", overlay=true)
+
+// Input para selecionar quantos dias atrás ancorar
+days_back = input.int(60, "Dias Atrás para Ancoragem", minval=1, maxval=365)
+
+// Calcular número de barras aproximado (depende do timeframe)
+bars_in_period = switch timeframe.period
+    "1"   => days_back * 390  // 1 min: ~390 barras por dia
+    "5"   => days_back * 78   // 5 min: ~78 barras por dia
+    "15"  => days_back * 26   // 15 min: ~26 barras por dia
+    "60"  => days_back * 6.5  // 1 hora: ~6.5 barras por dia
+    "240" => days_back * 1.6  // 4 horas: ~1.6 barras por dia
+    "D"   => days_back        // Diário: 1 barra por dia
+    => days_back * 6.5        // Padrão para outros timeframes
+
+// Encontrar a máxima do candle N barras atrás
+lookback_bars = math.floor(bars_in_period)
+anchor_high = bar_index >= lookback_bars ? high[lookback_bars] : na
+
+// Variáveis para calcular VWAP
+var float vwap_sum = 0.0
+var float volume_sum = 0.0
+var int start_bar = na
+
+// Inicializar no primeiro cálculo válido
+if (bar_index == lookback_bars)
+    start_bar := bar_index
+    vwap_sum := 0.0
+    volume_sum := 0.0
+
+// Calcular VWAP a partir do ponto de ancoragem
+if (bar_index >= lookback_bars)
+    // Preço típico
+    typical_price = hlc3
+
+    // Somar volume ponderado
+    if (bar_index == lookback_bars)
+        vwap_sum := typical_price * volume
+        volume_sum := volume
+    else
+        vwap_sum := vwap_sum[1] + (typical_price * volume)
+        volume_sum := volume_sum[1] + volume
+
+// Calcular valor da VWAP
+vwap_value = volume_sum > 0 ? vwap_sum / volume_sum : na
+
+// Plotar a VWAP
+plot(vwap_value, "VWAP Ancorada", color=color.blue, linewidth=2)
+
+// Plotar linha de referência na máxima de ancoragem
+hline_price = bar_index >= lookback_bars ? anchor_high : na
+plot(hline_price, "Máxima de Ancoragem", color=color.new(color.red, 30), linewidth=1, style=plot.style_cross)
+
+// Banda superior e inferior (desvio padrão)
+show_bands = input.bool(true, "Mostrar Bandas de Desvio")
+if (show_bands and bar_index >= lookback_bars)
+    var float sum_squared_diff = 0.0
+    typical_price = hlc3
+
+    if (bar_index == lookback_bars)
+        sum_squared_diff := math.pow(typical_price - vwap_value, 2) * volume
+    else
+        sum_squared_diff := sum_squared_diff[1] + (math.pow(typical_price - vwap_value, 2) * volume)
+
+    variance = sum_squared_diff / volume_sum
+    std_dev = math.sqrt(variance)
+
+    upper_band = vwap_value + std_dev
+    lower_band = vwap_value - std_dev
+
+    plot(upper_band, "Banda Superior", color=color.new(color.green, 50), linewidth=1)
+    plot(lower_band, "Banda Inferior", color=color.new(color.green, 50), linewidth=1)
+
+// Adicionar fill entre as bandas
+fill_color = color.new(color.blue, 90)
+p1 = plot(show_bands and bar_index >= lookback_bars ? vwap_value + (vwap_value - vwap_value) : na, display=display.none)
+p2 = plot(show_bands and bar_index >= lookback_bars ? vwap_value : na, display=display.none)
