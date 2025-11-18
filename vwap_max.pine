@@ -16,38 +16,36 @@ bars_in_period = switch timeframe.period
 
 lookback_bars = math.floor(bars_in_period)
 
-// Encontrar a máxima dos últimos N dias e quando ela ocorreu
-var int anchor_bar = na
-var float anchor_price = na
-var bool anchored = false
-
-// Procurar a máxima nos últimos lookback_bars
+// Encontrar a máxima dos últimos N dias (lookback_bars)
 highest_value = ta.highest(high, lookback_bars)
 
-// Detectar quando atingimos um novo máximo
-if (high == highest_value and not anchored)
-    anchor_bar := bar_index
-    anchor_price := high
-    anchored := true
+// Encontrar em qual barra ocorreu a máxima
+var int anchor_bar = na
+var float anchor_price = na
 
-// Resetar ancoragem se encontrarmos uma máxima maior
-if (high > anchor_price and not na(anchor_price))
-    anchor_bar := bar_index
-    anchor_price := high
+// Procurar a barra onde ocorreu a máxima nos últimos lookback_bars
+for i = 0 to lookback_bars - 1
+    if bar_index >= i and high[i] == highest_value
+        anchor_bar := bar_index - i
+        anchor_price := high[i]
+        break
 
 // Variáveis para calcular VWAP
 var float vwap_sum = 0.0
 var float volume_sum = 0.0
+var int last_anchor = na
 
 // Resetar VWAP quando ancoragem muda
-if (not na(anchor_bar) and bar_index == anchor_bar)
+if (not na(anchor_bar) and anchor_bar != last_anchor)
     vwap_sum := 0.0
     volume_sum := 0.0
+    last_anchor := anchor_bar
 
 // Calcular VWAP a partir do ponto de ancoragem
 if (not na(anchor_bar) and bar_index >= anchor_bar)
     typical_price = hlc3
 
+    // Calcular desde a barra de ancoragem
     if (bar_index == anchor_bar)
         vwap_sum := typical_price * volume
         volume_sum := volume
@@ -56,10 +54,10 @@ if (not na(anchor_bar) and bar_index >= anchor_bar)
         volume_sum := volume_sum[1] + volume
 
 // Calcular valor da VWAP
-vwap_value = volume_sum > 0 ? vwap_sum / volume_sum : na
+vwap_value = (not na(anchor_bar) and bar_index >= anchor_bar and volume_sum > 0) ? vwap_sum / volume_sum : na
 
-// Plotar a VWAP ancorada
+// Plotar a VWAP ancorada (somente se estiver dentro da janela de lookback)
 plot(vwap_value, "VWAP Ancorada na Máxima", color=color.blue, linewidth=2)
 
 // Plotar linha horizontal na máxima de ancoragem
-plot(anchor_price, "Ponto de Ancoragem (Máxima)", color=color.red, linewidth=1, style=plot.style_cross)
+plot(not na(anchor_price) ? anchor_price : na, "Ponto de Ancoragem (Máxima)", color=color.red, linewidth=1, style=plot.style_cross)
