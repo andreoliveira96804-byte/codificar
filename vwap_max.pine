@@ -62,4 +62,4 @@ vwap_value = volume_sum > 0 ? vwap_sum / volume_sum : na
 plot(vwap_value, "VWAP Ancorada na Máxima", color=color.blue, linewidth=2)
 
 // Plotar linha horizontal na máxima de ancoragem
-plot(anchor_price, "Máxima dos Últimos " + str.tostring(days_back) + " Dias", color=color.red, linewidth=1, style=plot.style_cross)
+plot(anchor_price, "Ponto de Ancoragem (Máxima)", color=color.red, linewidth=1, style=plot.style_cross)
