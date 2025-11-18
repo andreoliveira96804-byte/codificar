@@ -11,7 +11,7 @@ bb_mult = input.float(2.0, "Bollinger Bands StdDev", minval=0.1)
 
 // RSI
 rsi_length = input.int(14, "RSI Length", minval=1)
-rsi_threshold = input.float(25, "RSI Threshold", minval=0, maxval=100)
+rsi_threshold = input.float(30, "RSI Threshold", minval=0, maxval=100)
 
 // ATR
 atr_length = input.int(14, "ATR Length", minval=1)
@@ -41,7 +41,7 @@ high_lookback = high[lookback_days]
 // Critério 1: Candle fecha abaixo da banda inferior da Bollinger
 criterio1 = close < bb_lower
 
-// Critério 2: RSI abaixo de 25
+// Critério 2: RSI abaixo de 30
 criterio2 = rsi < rsi_threshold
 
 // Critério 3: Candle fechou abaixo de (máxima de 5 dias atrás - 5x ATR)
