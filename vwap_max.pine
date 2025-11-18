@@ -1,8 +1,8 @@
 //@version=6
 indicator("VWAP MAX", overlay=true)
 
-// Input para selecionar quantos dias atrás ancorar
-days_back = input.int(60, "Dias Atrás para Ancoragem", minval=1, maxval=365)
+// Input para definir período de lookback em dias
+days_back = input.int(60, "Período de Lookback (dias)", minval=1, maxval=365)
 
 // Calcular número de barras aproximado (depende do timeframe)
 bars_in_period = switch timeframe.period
@@ -14,28 +14,41 @@ bars_in_period = switch timeframe.period
     "D"   => days_back        // Diário: 1 barra por dia
     => days_back * 6.5        // Padrão para outros timeframes
 
-// Encontrar a máxima do candle N barras atrás
 lookback_bars = math.floor(bars_in_period)
-anchor_high = bar_index >= lookback_bars ? high[lookback_bars] : na
+
+// Encontrar a máxima dos últimos N dias e quando ela ocorreu
+var int anchor_bar = na
+var float anchor_price = na
+var bool anchored = false
+
+// Procurar a máxima nos últimos lookback_bars
+highest_value = ta.highest(high, lookback_bars)
+
+// Detectar quando atingimos um novo máximo
+if (high == highest_value and not anchored)
+    anchor_bar := bar_index
+    anchor_price := high
+    anchored := true
+
+// Resetar ancoragem se encontrarmos uma máxima maior
+if (high > anchor_price and not na(anchor_price))
+    anchor_bar := bar_index
+    anchor_price := high
 
 // Variáveis para calcular VWAP
 var float vwap_sum = 0.0
 var float volume_sum = 0.0
-var int start_bar = na
 
-// Inicializar no primeiro cálculo válido
-if (bar_index == lookback_bars)
-    start_bar := bar_index
+// Resetar VWAP quando ancoragem muda
+if (not na(anchor_bar) and bar_index == anchor_bar)
     vwap_sum := 0.0
     volume_sum := 0.0
 
 // Calcular VWAP a partir do ponto de ancoragem
-if (bar_index >= lookback_bars)
-    // Preço típico
+if (not na(anchor_bar) and bar_index >= anchor_bar)
     typical_price = hlc3
 
-    // Somar volume ponderado
-    if (bar_index == lookback_bars)
+    if (bar_index == anchor_bar)
         vwap_sum := typical_price * volume
         volume_sum := volume
     else
@@ -45,38 +58,8 @@ if (bar_index >= lookback_bars)
 // Calcular valor da VWAP
 vwap_value = volume_sum > 0 ? vwap_sum / volume_sum : na
 
-// Plotar a VWAP
-plot(vwap_value, "VWAP Ancorada", color=color.blue, linewidth=2)
+// Plotar a VWAP ancorada
+plot(vwap_value, "VWAP Ancorada na Máxima", color=color.blue, linewidth=2)
 
-// Plotar linha de referência na máxima de ancoragem
-hline_price = bar_index >= lookback_bars ? anchor_high : na
-plot(hline_price, "Máxima de Ancoragem", color=color.new(color.red, 30), linewidth=1, style=plot.style_cross)
-
-// Banda superior e inferior (desvio padrão)
-show_bands = input.bool(true, "Mostrar Bandas de Desvio")
-
-// Calcular bandas de desvio padrão
-var float sum_squared_diff = 0.0
-
-if (bar_index >= lookback_bars)
-    typical_price = hlc3
-
-    if (bar_index == lookback_bars)
-        sum_squared_diff := math.pow(typical_price - vwap_value, 2) * volume
-    else
-        sum_squared_diff := sum_squared_diff[1] + (math.pow(typical_price - vwap_value, 2) * volume)
-
-// Calcular bandas fora do escopo local
-variance = bar_index >= lookback_bars and volume_sum > 0 ? sum_squared_diff / volume_sum : na
-std_dev = not na(variance) ? math.sqrt(variance) : na
-
-upper_band = show_bands and not na(vwap_value) and not na(std_dev) ? vwap_value + std_dev : na
-lower_band = show_bands and not na(vwap_value) and not na(std_dev) ? vwap_value - std_dev : na
-
-// Plotar bandas
-plot(upper_band, "Banda Superior", color=color.new(color.green, 50), linewidth=1)
-plot(lower_band, "Banda Inferior", color=color.new(color.green, 50), linewidth=1)
-
-// Fill entre VWAP e bandas
-fill(plot(vwap_value, display=display.none), plot(upper_band, display=display.none), color=color.new(color.green, 90))
-fill(plot(vwap_value, display=display.none), plot(lower_band, display=display.none), color=color.new(color.green, 90))
+// Plotar linha horizontal na máxima de ancoragem
+plot(anchor_price, "Máxima dos Últimos " + str.tostring(days_back) + " Dias", color=color.red, linewidth=1, style=plot.style_cross)
