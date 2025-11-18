@@ -1,4 +1,4 @@
-//@version=5
+//@version=6
 indicator("VWAP MAX", overlay=true)
 
 // Input para selecionar quantos dias atrás ancorar
@@ -54,8 +54,11 @@ plot(hline_price, "Máxima de Ancoragem", color=color.new(color.red, 30), linewi
 
 // Banda superior e inferior (desvio padrão)
 show_bands = input.bool(true, "Mostrar Bandas de Desvio")
-if (show_bands and bar_index >= lookback_bars)
-    var float sum_squared_diff = 0.0
+
+// Calcular bandas de desvio padrão
+var float sum_squared_diff = 0.0
+
+if (bar_index >= lookback_bars)
     typical_price = hlc3
 
     if (bar_index == lookback_bars)
@@ -63,16 +66,17 @@ if (show_bands and bar_index >= lookback_bars)
     else
         sum_squared_diff := sum_squared_diff[1] + (math.pow(typical_price - vwap_value, 2) * volume)
 
-    variance = sum_squared_diff / volume_sum
-    std_dev = math.sqrt(variance)
+// Calcular bandas fora do escopo local
+variance = bar_index >= lookback_bars and volume_sum > 0 ? sum_squared_diff / volume_sum : na
+std_dev = not na(variance) ? math.sqrt(variance) : na
 
-    upper_band = vwap_value + std_dev
-    lower_band = vwap_value - std_dev
+upper_band = show_bands and not na(vwap_value) and not na(std_dev) ? vwap_value + std_dev : na
+lower_band = show_bands and not na(vwap_value) and not na(std_dev) ? vwap_value - std_dev : na
 
-    plot(upper_band, "Banda Superior", color=color.new(color.green, 50), linewidth=1)
-    plot(lower_band, "Banda Inferior", color=color.new(color.green, 50), linewidth=1)
+// Plotar bandas
+plot(upper_band, "Banda Superior", color=color.new(color.green, 50), linewidth=1)
+plot(lower_band, "Banda Inferior", color=color.new(color.green, 50), linewidth=1)
 
-// Adicionar fill entre as bandas
-fill_color = color.new(color.blue, 90)
-p1 = plot(show_bands and bar_index >= lookback_bars ? vwap_value + (vwap_value - vwap_value) : na, display=display.none)
-p2 = plot(show_bands and bar_index >= lookback_bars ? vwap_value : na, display=display.none)
+// Fill entre VWAP e bandas
+fill(plot(vwap_value, display=display.none), plot(upper_band, display=display.none), color=color.new(color.green, 90))
+fill(plot(vwap_value, display=display.none), plot(lower_band, display=display.none), color=color.new(color.green, 90))
