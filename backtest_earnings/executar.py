@@ -25,14 +25,34 @@ from .indicadores import calcular_filtros
 JANELA = 30                  # pregões usados na RV30 e no volume médio
 PREGOES_ANTES = JANELA + 5   # quantos pregões de preço baixar antes da entrada
 FAIXA_DELTA = (0.2, 0.8)     # na entrada, só baixamos opções "perto do dinheiro"
+COLUNAS_CADEIA = ["date", "act_symbol", "expiration", "strike", "call_put", "bid", "ask", "vol"]
 
 
 def log(msg):
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", file=sys.stderr, flush=True)
 
 
-def executar_tarefas(cliente, db, tarefas, montar_sql, descricao):
-    """Roda (data, lote) em paralelo; se um lote passar de 1.000 linhas, divide ao meio."""
+DATAS = {"date", "expiration"}
+TEXTOS = {"act_symbol", "call_put"}
+
+
+def para_tabela(linhas, colunas):
+    """Converte linhas da API (tudo em texto) numa tabela com datas e números."""
+    df = pd.DataFrame(linhas, columns=colunas)
+    for coluna in colunas:
+        if coluna in DATAS:
+            df[coluna] = pd.to_datetime(df[coluna])
+        elif coluna not in TEXTOS:
+            df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
+    return df
+
+
+def executar_tarefas(cliente, db, tarefas, montar_sql, colunas, descricao):
+    """Roda (data, lote) em paralelo e junta tudo numa tabela.
+
+    Se um lote passar de 1.000 linhas, divide ao meio. Cada resposta já vira
+    tabela ao chegar, para não acumular milhões de dicionários na memória.
+    """
 
     def rodar(data, lote):
         try:
@@ -44,25 +64,23 @@ def executar_tarefas(cliente, db, tarefas, montar_sql, descricao):
             meio = len(lote) // 2
             return rodar(data, lote[:meio]) + rodar(data, lote[meio:])
 
-    linhas, feitas = [], 0
+    partes, feitas = [], 0
     with ThreadPoolExecutor(cliente.paralelismo) as executor:
         futuros = [executor.submit(rodar, data, lote) for data, lote in tarefas]
         for futuro in as_completed(futuros):
-            linhas.extend(futuro.result())
+            linhas = futuro.result()
+            if linhas:
+                partes.append(para_tabela(linhas, colunas))
             feitas += 1
-            if feitas % 200 == 0 or feitas == len(futuros):
+            if feitas % 500 == 0 or feitas == len(futuros):
                 log(f"  {descricao}: {feitas}/{len(futuros)} consultas")
-    return linhas
+    if not partes:
+        return para_tabela([], colunas)
+    return pd.concat(partes, ignore_index=True)
 
 
 def em_lotes(itens, tamanho):
     return [itens[i:i + tamanho] for i in range(0, len(itens), tamanho)]
-
-
-def para_numeros(df, colunas):
-    for coluna in colunas:
-        df[coluna] = pd.to_numeric(df[coluna], errors="coerce")
-    return df
 
 
 def baixar_cadeias_entrada(cliente, eventos, tamanho=20):
@@ -74,12 +92,7 @@ def baixar_cadeias_entrada(cliente, eventos, tamanho=20):
                 f"WHERE date='{data:%Y-%m-%d}' AND act_symbol IN ({lista_sql(lote)}) "
                 f"AND ABS(delta) BETWEEN {FAIXA_DELTA[0]} AND {FAIXA_DELTA[1]}")
 
-    linhas = executar_tarefas(cliente, "options", tarefas, sql, "cadeias de entrada")
-    colunas = ["date", "act_symbol", "expiration", "strike", "call_put", "bid", "ask", "vol"]
-    df = pd.DataFrame(linhas, columns=colunas)
-    df["date"] = pd.to_datetime(df["date"])
-    df["expiration"] = pd.to_datetime(df["expiration"])
-    return para_numeros(df, ["strike", "bid", "ask", "vol"])
+    return executar_tarefas(cliente, "options", tarefas, sql, COLUNAS_CADEIA, "cadeias de entrada")
 
 
 def baixar_cadeias_saida(cliente, operacoes, tamanho=6):
@@ -92,12 +105,7 @@ def baixar_cadeias_saida(cliente, operacoes, tamanho=6):
         return ("SELECT date, act_symbol, expiration, strike, call_put, bid, ask, vol FROM option_chain "
                 f"WHERE date='{data:%Y-%m-%d}' AND act_symbol IN ({lista_sql(lote)})")
 
-    linhas = executar_tarefas(cliente, "options", tarefas, sql, "cadeias de saída")
-    colunas = ["date", "act_symbol", "expiration", "strike", "call_put", "bid", "ask", "vol"]
-    df = pd.DataFrame(linhas, columns=colunas)
-    df["date"] = pd.to_datetime(df["date"])
-    df["expiration"] = pd.to_datetime(df["expiration"])
-    return para_numeros(df, ["strike", "bid", "ask", "vol"])
+    return executar_tarefas(cliente, "options", tarefas, sql, COLUNAS_CADEIA, "cadeias de saída")
 
 
 def baixar_precos(cliente, eventos, dias_pregao, tamanho=300):
@@ -116,10 +124,9 @@ def baixar_precos(cliente, eventos, dias_pregao, tamanho=300):
         return ("SELECT date, act_symbol, open, high, low, close, volume FROM ohlcv "
                 f"WHERE date='{data:%Y-%m-%d}' AND act_symbol IN ({lista_sql(lote)})")
 
-    linhas = executar_tarefas(cliente, "stocks", tarefas, sql, "preços das ações")
-    df = pd.DataFrame(linhas, columns=["date", "act_symbol", "open", "high", "low", "close", "volume"])
-    df["date"] = pd.to_datetime(df["date"])
-    return para_numeros(df, ["open", "high", "low", "close", "volume"]).sort_values(["act_symbol", "date"])
+    colunas = ["date", "act_symbol", "open", "high", "low", "close", "volume"]
+    precos = executar_tarefas(cliente, "stocks", tarefas, sql, colunas, "preços das ações")
+    return precos.sort_values(["act_symbol", "date"])
 
 
 PERNAS = (("fc", "front", "Call"), ("fp", "front", "Put"), ("bc", "back", "Call"))
