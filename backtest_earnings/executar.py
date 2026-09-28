@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from .dolthub import DoltHub, LimiteDeLinhas, lista_sql
+from .dolthub import DoltHub, ErroConsulta, LimiteDeLinhas, lista_sql
 from .estrategias import cotar, escolher_contratos, retorno_calendar, retorno_straddle
 from .eventos import carregar_eventos, definir_datas, dias_com_dados
 from .indicadores import calcular_filtros
@@ -63,6 +63,9 @@ def executar_tarefas(cliente, db, tarefas, montar_sql, colunas, descricao):
                 return []
             meio = len(lote) // 2
             return rodar(data, lote[:meio]) + rodar(data, lote[meio:])
+        except ErroConsulta as erro:
+            log(f"  aviso: consulta de {data:%Y-%m-%d} ({len(lote)} itens) falhou e foi ignorada: {erro}")
+            return []
 
     partes, feitas = [], 0
     with ThreadPoolExecutor(cliente.paralelismo) as executor:
