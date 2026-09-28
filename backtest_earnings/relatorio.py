@@ -15,6 +15,8 @@ from .analise import (LIMITES_VIDEO, classificar, curva_capital, decis, kelly, l
 from .estrategias import retorno_calendar, retorno_straddle
 
 ESTRATEGIAS = {"straddle": ("Straddle vendido", retorno_straddle), "calendar": ("Calendar", retorno_calendar)}
+SPREAD_MAX = 0.10    # universo negociável: spread do straddle na entrada até 10% do preço dele
+PRECO_MINIMO = 0.10  # crédito do straddle / débito do calendar (no mid) de pelo menos US$ 0,10
 PREDITORES = {
     "ts_slope_0_45": "Inclinação da estrutura a termo (0→45 dias)",
     "iv30_rv30": "IV30 / RV30",
@@ -56,8 +58,15 @@ CAB_RESUMO = ["", "n", "Média", "Mediana", "Desvio", "Acerto", "5% piores até"
 def carregar(pasta):
     df = pd.read_csv(Path(pasta) / "trades.csv",
                      parse_dates=["data_anuncio", "data_entrada", "data_saida", "front", "back"])
+    mid = lambda perna: (df[f"{perna}_bid_ent"] + df[f"{perna}_ask_ent"]) / 2
+    df["credito_mid"] = mid("fc") + mid("fp")
+    df["debito_mid"] = mid("bc") - mid("fc")
+    # Liquidez: quanto do preço do straddle o spread representa na entrada.
+    df["spread_rel"] = (df["fc_ask_ent"] + df["fp_ask_ent"] - df["fc_bid_ent"] - df["fp_bid_ent"]) / df["credito_mid"]
+    # Cotações sem sentido (débito <= 0: a opção longa "mais barata" que a curta) são erro de dado.
+    minimo = {"straddle": df["credito_mid"] >= PRECO_MINIMO, "calendar": df["debito_mid"] >= PRECO_MINIMO}
     for chave, (_, funcao) in ESTRATEGIAS.items():
-        valido = df[f"ret_{chave}"].notna()
+        valido = df[f"ret_{chave}"].notna() & minimo[chave]
         for k in (0, 0.5, 1):
             df[f"r_{chave}_k{k}"] = funcao(df, k=k).where(valido)
         df[f"r_{chave}"] = df[f"r_{chave}_k0.5"]
@@ -82,18 +91,38 @@ def secao_funil(pasta, df):
     return "\n".join(partes)
 
 
-def secao_sem_filtro(df):
+def secao_liquidez(df):
+    faixas = pd.cut(df["spread_rel"], [0, 0.02, 0.05, 0.10, 0.20, 0.40, np.inf],
+                    labels=["até 2%", "2% a 5%", "5% a 10%", "10% a 20%", "20% a 40%", "acima de 40%"])
     linhas = []
-    for chave, (nome, _) in ESTRATEGIAS.items():
-        for k, rotulo in ((0, "preço médio"), (0.5, "meio spread"), (1, "spread inteiro")):
-            linhas.append(linha_resumo(f"{nome}, k={k} ({rotulo})", df[f"r_{chave}_k{k}"]))
-    return ("## 2. Todos os eventos, sem filtro\n\n"
+    for faixa, grupo in df.groupby(faixas, observed=True):
+        s, c = resumo(grupo["r_straddle"]), resumo(grupo["r_calendar"])
+        linhas.append([faixa, s["n"], pct(s.get("media")), pct(s.get("mediana")), f"{s.get('acerto', 0):.0%}",
+                       c["n"], pct(c.get("media")), pct(c.get("mediana")), f"{c.get('acerto', 0):.0%}",
+                       num(grupo["volume_medio_30"].median())])
+    return ("## 2. Liquidez das opções (k = 0,5)\n\n"
+            "Spread do straddle na entrada = (soma dos ask − soma dos bid) ÷ preço médio do straddle. "
+            "Opções ilíquidas têm cotações pouco confiáveis e custo de execução altíssimo.\n\n"
+            + tabela(linhas, ["Spread na entrada", "n straddle", "Média", "Mediana", "Acerto",
+                              "n calendar", "Média", "Mediana", "Acerto", "Volume mediano da ação"])
+            + f"\n\n**Universo negociável** (usado da seção 4 em diante): spread do straddle na entrada até "
+            f"{SPREAD_MAX:.0%}. Esse limite foi escolhido depois de ver esta tabela; é a regra prática de "
+            "não operar opções com spread largo, e só usa informação disponível na entrada.\n")
+
+
+def secao_sem_filtro(df, negociavel):
+    linhas = []
+    for rotulo_universo, universo in (("Todos", df), ("Negociável", negociavel)):
+        for chave, (nome, _) in ESTRATEGIAS.items():
+            for k, rotulo in ((0, "preço médio"), (0.5, "meio spread"), (1, "spread inteiro")):
+                linhas.append(linha_resumo(f"{rotulo_universo} — {nome}, k={k} ({rotulo})", universo[f"r_{chave}_k{k}"]))
+    return ("## 3. Sem os filtros do vídeo\n\n"
             "No vídeo, operar todos os eventos dá retorno médio perto de zero.\n\n"
             + tabela(linhas, CAB_RESUMO) + "\n")
 
 
 def secao_decis(df):
-    partes = ["## 3. Decis (k = 0,5)\n",
+    partes = ["## 4. Decis (k = 0,5)\n",
               "Cada variável dividida em 10 grupos do mesmo tamanho (1 = menores valores). "
               "Se o filtro funciona, o retorno deve melhorar de forma consistente numa direção.\n"]
     for coluna, titulo in PREDITORES.items():
@@ -137,7 +166,7 @@ def secao_fora_da_amostra(df):
              "congelados, no período de TESTE.\n\n"
              f"Limites do treino: volume ≥ {num(limites['volume_medio_30'])}, "
              f"IV30/RV30 ≥ {limites['iv30_rv30']:.2f}, inclinação ≤ {limites['ts_slope_0_45']:.5f}.")
-    return ("## 5. Filtros recalibrados e teste fora da amostra\n\n" + texto + "\n\n"
+    return ("## 6. Filtros recalibrados e teste fora da amostra\n\n" + texto + "\n\n"
             + tabela(linhas, CAB_RESUMO) + "\n"), limites, corte
 
 
@@ -148,7 +177,7 @@ def secao_por_ano(df, limites):
         rec = grupo[grupo["classe"] == "Recommended"]
         linhas.append([ano, len(grupo), pct(grupo["r_straddle"].mean()), pct(grupo["r_calendar"].mean()),
                        len(rec), pct(rec["r_straddle"].mean()), pct(rec["r_calendar"].mean())])
-    return ("## 6. Por ano (k = 0,5; limites recalibrados)\n\n"
+    return ("## 7. Por ano (k = 0,5; limites recalibrados)\n\n"
             + tabela(linhas, ["Ano", "n todos", "Straddle todos", "Calendar todos",
                               "n Recommended", "Straddle Rec.", "Calendar Rec."]) + "\n")
 
@@ -164,7 +193,7 @@ def secao_acumulado(df, limites, fracao=0.05):
             curva = curva_capital(por_dia.values, fracao)
             linhas.append([f"{rotulo} — {nome}", len(por_dia), f"US$ {curva[-1]:,.0f}".replace(",", "."),
                            pct(curva[-1] / 10_000 - 1, 0), pct(-queda_maxima(np.r_[10_000, curva]), 0)])
-    return (f"## 7. Retorno acumulado (US$ 10.000, {fracao:.0%} do capital por dia de operação, k = 0,5)\n\n"
+    return (f"## 8. Retorno acumulado (US$ 10.000, {fracao:.0%} do capital por dia de operação, k = 0,5)\n\n"
             "Quando várias operações entram no mesmo dia, o capital daquele dia é dividido igualmente "
             "entre elas (usamos o retorno médio do dia).\n\n"
             + tabela(linhas, ["Carteira", "Dias com operação", "Capital final", "Retorno", "Queda máxima"]) + "\n")
@@ -173,7 +202,7 @@ def secao_acumulado(df, limites, fracao=0.05):
 def secao_kelly(df, limites, corte):
     teste = df[(df["data_entrada"] >= corte) & (classificar(df, limites) == "Recommended")]
     anos = max((teste["data_entrada"].max() - teste["data_entrada"].min()).days / 365, 0.25) if len(teste) else 1
-    partes = ["## 8. Kelly e Monte Carlo (Recommended, período de teste, k = 0,5)\n",
+    partes = ["## 9. Kelly e Monte Carlo (Recommended, período de teste, k = 0,5)\n",
               "Monte Carlo: 10.000 caminhos de 1 ano, começando com US$ 10.000. "
               "Sorteamos TEMPORADAS inteiras de resultados (e não operações soltas), para que "
               "perdas que acontecem juntas continuem juntas. Obs.: a simulação faz uma operação "
@@ -202,21 +231,23 @@ def secao_kelly(df, limites, corte):
 
 
 def gerar(pasta):
-    df = carregar(pasta)
-    secao5, limites, corte = secao_fora_da_amostra(df)
+    todos = carregar(pasta)
+    df = todos[todos["spread_rel"] <= SPREAD_MAX]
+    secao6, limites, corte = secao_fora_da_amostra(df)
     partes = [
         "# Relatório do backtest — venda de volatilidade em resultados\n",
         "Backtest APROXIMADO com dados de fim de dia (EOD) do DoltHub: entrada no fechamento antes do "
         "anúncio, saída no fechamento depois dele. k = fração do spread paga em cada execução; "
         "comissão de US$ 0,65 por contrato. Retorno do straddle sobre o prêmio recebido; do calendar "
         "sobre o débito pago.\n",
-        secao_funil(pasta, df),
-        secao_sem_filtro(df),
+        secao_funil(pasta, todos),
+        secao_liquidez(todos),
+        secao_sem_filtro(todos, df),
         secao_decis(df),
-        secao_classes(df, LIMITES_VIDEO, "## 4. Filtros com os limites do vídeo",
+        secao_classes(df, LIMITES_VIDEO, "## 5. Filtros com os limites do vídeo",
                       "Atenção: aqui o primeiro vencimento fica a ~2 semanas (no vídeo, a poucos dias), então "
                       "a escala da inclinação é diferente e o limite do vídeo não é diretamente comparável."),
-        secao5,
+        secao6,
         secao_por_ano(df, limites),
         secao_acumulado(df, limites),
         secao_kelly(df, limites, corte),

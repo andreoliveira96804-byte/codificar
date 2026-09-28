@@ -52,6 +52,9 @@ python -m pytest tests
    - `k = 0,5`: paga meio spread (é o padrão);
    - `k = 1`: paga o spread inteiro.
 6. **Relatório:**
+   - liquidez das opções. O **universo negociável** usa só operações com
+     spread do straddle na entrada até 10% do preço dele: opções ilíquidas
+     têm cotações pouco confiáveis e custo de execução proibitivo;
    - resultado sem filtro;
    - decis de cada filtro;
    - filtros com os limites do vídeo;
