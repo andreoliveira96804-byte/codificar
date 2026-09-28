@@ -5,3 +5,5 @@ resultados_log.txt
 __pycache__/
 *.pyc
 .pytest_cache/
+resultados_parcial/
+resultados_parcial_log.txt

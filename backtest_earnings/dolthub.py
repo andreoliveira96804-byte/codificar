@@ -9,6 +9,7 @@
 import gzip
 import hashlib
 import json
+import os
 import time
 import urllib.error
 import urllib.parse
@@ -28,11 +29,13 @@ class ErroConsulta(Exception):
 
 
 class DoltHub:
-    def __init__(self, pasta_cache="dados/cache", paralelismo=8, tentativas=5):
+    def __init__(self, pasta_cache="dados/cache", paralelismo=8, tentativas=5, so_cache=False):
+        """so_cache=True: não baixa nada; consulta fora do cache devolve lista vazia."""
         self.pasta_cache = Path(pasta_cache)
         self.pasta_cache.mkdir(parents=True, exist_ok=True)
         self.paralelismo = paralelismo
         self.tentativas = tentativas
+        self.so_cache = so_cache
 
     def _arquivo_cache(self, db, sql):
         chave = hashlib.sha1(f"{db}\n{sql}".encode()).hexdigest()
@@ -42,8 +45,13 @@ class DoltHub:
         """Executa uma consulta SQL e devolve a lista de linhas (dicts com valores em texto)."""
         arquivo = self._arquivo_cache(db, sql)
         if arquivo.exists():
-            with gzip.open(arquivo, "rt") as f:
-                return json.load(f)
+            try:
+                with gzip.open(arquivo, "rt") as f:
+                    return json.load(f)
+            except (OSError, EOFError, json.JSONDecodeError):
+                pass  # arquivo incompleto (outro processo ainda gravando): trata como fora do cache
+        if self.so_cache:
+            return []
 
         url = URL_BASE.format(db=db) + "?" + urllib.parse.urlencode({"q": sql})
         ultimo_erro = None
@@ -58,8 +66,10 @@ class DoltHub:
                     raise ErroConsulta(f"{status}: {dados.get('query_execution_message', '')[:300]}")
                 linhas = dados.get("rows", [])
                 arquivo.parent.mkdir(parents=True, exist_ok=True)
-                with gzip.open(arquivo, "wt") as f:
+                temporario = arquivo.with_suffix(f".{os.getpid()}.tmp")
+                with gzip.open(temporario, "wt") as f:
                     json.dump(linhas, f)
+                os.replace(temporario, arquivo)  # grava de uma vez: quem lê nunca vê arquivo pela metade
                 return linhas
             except LimiteDeLinhas:
                 raise

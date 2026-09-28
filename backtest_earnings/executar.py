@@ -211,9 +211,11 @@ def main(argv=None):
     parser.add_argument("--saida", default="resultados")
     parser.add_argument("--cache", default="dados/cache")
     parser.add_argument("--paralelismo", type=int, default=8)
+    parser.add_argument("--so-cache", action="store_true",
+                        help="não baixa nada: usa só o que já está no cache (resultado parcial)")
     args = parser.parse_args(argv)
 
-    cliente = DoltHub(args.cache, args.paralelismo)
+    cliente = DoltHub(args.cache, args.paralelismo, so_cache=args.so_cache)
     inicio, fim = pd.Timestamp(args.inicio), pd.Timestamp(args.fim)
 
     log("1/6 Mapeando dias com dados (pregões e opções)...")
@@ -245,7 +247,10 @@ def main(argv=None):
     funil["com preços e contratos montáveis"] = len(operacoes)
 
     log(f"6/6 Baixando cotações de saída ({len(operacoes)} operações)...")
-    operacoes = preencher_saida(operacoes, baixar_cadeias_saida(cliente, operacoes))
+    cadeias_saida = baixar_cadeias_saida(cliente, operacoes)
+    com_saida = set(zip(cadeias_saida["date"], cadeias_saida["act_symbol"]))
+    funil["com cadeia de opções na saída"] = sum((d, s) in com_saida for d, s in zip(operacoes["data_saida"], operacoes["simbolo"]))
+    operacoes = preencher_saida(operacoes, cadeias_saida)
 
     ok_straddle = cotacoes_validas(operacoes, ["fc", "fp"], "ent") & cotacoes_validas(operacoes, ["fc", "fp"], "sai") & (operacoes["fc_bid_ent"] > 0) & (operacoes["fp_bid_ent"] > 0)
     ok_calendar = cotacoes_validas(operacoes, ["fc", "bc"], "ent") & cotacoes_validas(operacoes, ["fc", "bc"], "sai") & (operacoes["fc_bid_ent"] > 0)
