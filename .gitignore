@@ -7,3 +7,6 @@ __pycache__/
 .pytest_cache/
 resultados_parcial/
 resultados_parcial_log.txt
+resultados_puts/*
+!resultados_puts/relatorio.md
+resultados_puts_log.txt
