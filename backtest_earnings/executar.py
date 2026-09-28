@@ -54,7 +54,18 @@ def executar_tarefas(cliente, db, tarefas, montar_sql, colunas, descricao):
     tabela ao chegar, para não acumular milhões de dicionários na memória.
     """
 
+    def ja_dividida(data, lote):
+        """Consultas divididas antes do aviso de limite ser guardado: as metades estão no cache."""
+        if len(lote) < 2 or cliente.em_cache(db, montar_sql(data, lote)):
+            return False
+        meio = len(lote) // 2
+        return all(cliente.em_cache(db, montar_sql(data, metade)) or ja_dividida(data, metade)
+                   for metade in (lote[:meio], lote[meio:]))
+
     def rodar(data, lote):
+        if ja_dividida(data, lote):
+            meio = len(lote) // 2
+            return rodar(data, lote[:meio]) + rodar(data, lote[meio:])
         try:
             return cliente.consultar(db, montar_sql(data, lote))
         except LimiteDeLinhas:

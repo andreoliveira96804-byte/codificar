@@ -87,3 +87,19 @@ def test_metricas():
     m = metricas(curva)
     assert m["final"] == pytest.approx(1.21)
     assert m["queda_max"] == pytest.approx(-0.2)
+
+
+def test_confirma_so_o_desdobramento_que_aparece_no_preco():
+    from backtest_puts.executar import ajustar_desdobramentos, confirmar_desdobramentos
+
+    datas = pd.bdate_range("2024-06-03", "2024-06-14")
+    fechamentos = [1150, 1160, 1224, 1210, 1209, 121.8, 120.9, 125.2, 129.6, 131.9]
+    p = pd.DataFrame({"date": datas, "act_symbol": "NVDA", "close": fechamentos, "volume": 1e6})
+    registros = pd.DataFrame({"act_symbol": ["NVDA", "NVDA"], "razao": [10.0, 10.0],
+                              "ex_date": pd.to_datetime(["2024-05-24", "2024-06-10"])})  # registro duplicado
+    d = confirmar_desdobramentos(p, registros)
+    assert len(d) == 1 and d.iloc[0]["data"] == pd.Timestamp("2024-06-10") and d.iloc[0]["razao"] == 10
+    ajustado = ajustar_desdobramentos(p, d, ["close"], "volume")
+    assert ajustado["close"].iloc[0] == pytest.approx(115.0)
+    assert ajustado["close"].iloc[-1] == pytest.approx(131.9)
+    assert ajustado["volume"].iloc[0] == pytest.approx(1e7)

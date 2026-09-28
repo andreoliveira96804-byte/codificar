@@ -42,9 +42,18 @@ class DoltHub:
         chave = hashlib.sha1(f"{db}\n{sql}".encode()).hexdigest()
         return self.pasta_cache / chave[:2] / f"{chave}.json.gz"
 
+    def _marca_limite(self, db, sql):
+        return self._arquivo_cache(db, sql).with_suffix(".limite")
+
+    def em_cache(self, db, sql):
+        """True se a resposta (ou o aviso de "passou de 1.000 linhas") já está guardada."""
+        return self._arquivo_cache(db, sql).exists() or self._marca_limite(db, sql).exists()
+
     def consultar(self, db, sql):
         """Executa uma consulta SQL e devolve a lista de linhas (dicts com valores em texto)."""
         arquivo = self._arquivo_cache(db, sql)
+        if self._marca_limite(db, sql).exists():
+            raise LimiteDeLinhas(sql[:200])
         if arquivo.exists():
             try:
                 with gzip.open(arquivo, "rt") as f:
@@ -62,6 +71,9 @@ class DoltHub:
                     dados = json.load(resposta)
                 status = dados.get("query_execution_status")
                 if status == "RowLimit":
+                    # guarda o aviso: na próxima vez, divide a consulta sem perguntar de novo
+                    self._marca_limite(db, sql).parent.mkdir(parents=True, exist_ok=True)
+                    self._marca_limite(db, sql).touch()
                     raise LimiteDeLinhas(sql[:200])
                 if status != "Success":
                     raise ErroConsulta(f"{status}: {dados.get('query_execution_message', '')[:300]}")

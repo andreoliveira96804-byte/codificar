@@ -200,3 +200,24 @@ def test_dolthub_tenta_de_novo_quando_o_servidor_derruba_a_conexao(tmp_path, mon
     cliente = dolthub.DoltHub(tmp_path)
     assert cliente.consultar("options", "SELECT 1") == [{"a": "1"}]
     assert len(chamadas) == 2
+
+
+def test_dolthub_guarda_o_aviso_de_limite_de_linhas(tmp_path, monkeypatch):
+    import io
+    import json as json_lib
+
+    from backtest_earnings import dolthub
+
+    chamadas = []
+
+    def urlopen_falso(url, timeout):
+        chamadas.append(url)
+        return io.BytesIO(json_lib.dumps({"query_execution_status": "RowLimit", "rows": []}).encode())
+
+    monkeypatch.setattr(dolthub.urllib.request, "urlopen", urlopen_falso)
+    cliente = dolthub.DoltHub(tmp_path)
+    for _ in range(2):
+        with pytest.raises(dolthub.LimiteDeLinhas):
+            cliente.consultar("options", "SELECT muita_coisa")
+    assert len(chamadas) == 1  # a segunda vez nem vai à internet
+    assert cliente.em_cache("options", "SELECT muita_coisa")

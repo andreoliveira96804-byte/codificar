@@ -89,6 +89,40 @@ def baixar_puts(cliente, simbolos, dias, tamanho=15):
     return puts.sort_values(["act_symbol", "date", "expiration", "strike"], ignore_index=True)
 
 
+def baixar_desdobramentos(cliente, simbolos, inicio):
+    linhas = cliente.consultar("stocks", "SELECT act_symbol, ex_date, to_factor, for_factor FROM split "
+                               f"WHERE ex_date >= '{inicio:%Y-%m-%d}' AND act_symbol IN ({lista_sql(simbolos)})")
+    registros = pd.DataFrame(linhas, columns=["act_symbol", "ex_date", "to_factor", "for_factor"])
+    registros["ex_date"] = pd.to_datetime(registros["ex_date"])
+    registros["razao"] = pd.to_numeric(registros["to_factor"]) / pd.to_numeric(registros["for_factor"])
+    return registros
+
+
+def confirmar_desdobramentos(precos, registros, tolerancia=0.15):
+    """A tabela de desdobramentos (splits) do DoltHub tem registros duplicados e datas de anúncio.
+    Só vale o desdobramento em que o preço de fato saltou na proporção, perto da data registrada.
+    Devolve (simbolo, data, razao), onde `data` é o primeiro pregão já na escala nova."""
+    confirmados = set()
+    for reg in registros.itertuples():
+        serie = precos.loc[precos["act_symbol"] == reg.act_symbol].set_index("date")["close"].sort_index()
+        salto = (serie.shift(1) / serie).loc[reg.ex_date - pd.Timedelta(days=10):reg.ex_date + pd.Timedelta(days=30)]
+        batem = salto[(salto / reg.razao - 1).abs() < tolerancia]
+        if len(batem):
+            confirmados.add((reg.act_symbol, batem.index[0], reg.razao))
+    return pd.DataFrame(sorted(confirmados), columns=["simbolo", "data", "razao"])
+
+
+def ajustar_desdobramentos(df, desdobramentos, colunas_preco, coluna_volume=None):
+    """Leva preços (e strikes) de antes de cada desdobramento para a escala nova."""
+    df = df.copy()
+    for d in desdobramentos.itertuples():
+        antes = (df["act_symbol"] == d.simbolo) & (df["date"] < d.data)
+        df.loc[antes, colunas_preco] = df.loc[antes, colunas_preco] / d.razao
+        if coluna_volume:
+            df.loc[antes, coluna_volume] = df.loc[antes, coluna_volume] * d.razao
+    return df
+
+
 def escolher_put(cadeia, data):
     """Vencimento mais perto de DTE_ALVO (dentro de FAIXA_DTE) e put com delta mais perto
     de DELTA_ALVO (dentro de FAIXA_DELTA), com bid > 0. Devolve a linha ou None."""
@@ -210,6 +244,10 @@ def main(argv=None):
     log("3/5 Baixando preços e volatilidade...")
     dias_teste = pregoes[pregoes >= inicio - pd.Timedelta(days=45)]
     precos = baixar_precos(cliente, simbolos + [REFERENCIA], dias_teste)
+    desdobramentos = confirmar_desdobramentos(precos, baixar_desdobramentos(cliente, simbolos, dias_teste[0]))
+    desdobramentos.to_csv(pasta / "desdobramentos.csv", index=False)
+    log(f"  desdobramentos confirmados: {', '.join(f'{d.simbolo} {d.data:%d/%m/%Y} ({d.razao:g}:1)' for d in desdobramentos.itertuples())}")
+    precos = ajustar_desdobramentos(precos, desdobramentos, ["open", "high", "low", "close"], "volume")
     precos.to_csv(pasta / "precos.csv", index=False)
     semanas = pd.Series(dias_opcoes, index=dias_opcoes).groupby([dias_opcoes.isocalendar().year,
                                                                   dias_opcoes.isocalendar().week]).min()
@@ -219,6 +257,8 @@ def main(argv=None):
     log(f"4/5 Baixando cadeias de puts ({len(dias_opcoes)} dias x {len(simbolos)} ações)...")
     puts = baixar_puts(cliente, simbolos, dias_opcoes)
     log(f"  {len(puts):,} linhas de puts".replace(",", "."))
+    puts = ajustar_desdobramentos(puts, desdobramentos, ["strike", "bid", "ask"])
+    puts["strike"] = puts["strike"].round(2)  # ex.: 250 / 3 = 83,33, o strike ajustado que a bolsa lista
     painel = Painel(puts, precos)
     del puts
     volume_30 = (precos.assign(fin=precos["close"] * precos["volume"])
