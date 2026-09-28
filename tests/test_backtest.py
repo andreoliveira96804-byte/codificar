@@ -178,3 +178,25 @@ def test_classificar():
                        "ts_slope_0_45": [-0.01, -0.01, 0.0]})
     limites = {"volume_medio_30": 1.5e6, "iv30_rv30": 1.25, "ts_slope_0_45": -0.005}
     assert list(classificar(df, limites)) == ["Recommended", "Consider", "Avoid"]
+
+
+def test_dolthub_tenta_de_novo_quando_o_servidor_derruba_a_conexao(tmp_path, monkeypatch):
+    import http.client
+    import io
+    import json as json_lib
+
+    from backtest_earnings import dolthub
+
+    chamadas = []
+
+    def urlopen_falso(url, timeout):
+        chamadas.append(url)
+        if len(chamadas) == 1:
+            raise http.client.RemoteDisconnected("Remote end closed connection without response")
+        return io.BytesIO(json_lib.dumps({"query_execution_status": "Success", "rows": [{"a": "1"}]}).encode())
+
+    monkeypatch.setattr(dolthub.urllib.request, "urlopen", urlopen_falso)
+    monkeypatch.setattr(dolthub.time, "sleep", lambda s: None)
+    cliente = dolthub.DoltHub(tmp_path)
+    assert cliente.consultar("options", "SELECT 1") == [{"a": "1"}]
+    assert len(chamadas) == 2

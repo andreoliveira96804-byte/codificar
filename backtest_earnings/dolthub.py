@@ -8,6 +8,7 @@
 
 import gzip
 import hashlib
+import http.client
 import json
 import os
 import time
@@ -73,7 +74,8 @@ class DoltHub:
                 return linhas
             except LimiteDeLinhas:
                 raise
-            except (urllib.error.URLError, TimeoutError, ErroConsulta, json.JSONDecodeError) as erro:
+            # OSError cobre URLError, timeout e conexão encerrada pelo servidor (RemoteDisconnected)
+            except (OSError, http.client.HTTPException, ErroConsulta, json.JSONDecodeError) as erro:
                 ultimo_erro = erro
                 time.sleep(2 ** tentativa)
         raise ErroConsulta(f"falhou após {self.tentativas} tentativas: {ultimo_erro}")
